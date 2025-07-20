@@ -270,9 +270,46 @@ const (
 )
 
 func (c *Client) WaitForServerReady(ctx context.Context) error {
-	// TODO: wait for specific messages or poll workspace/symbol
-	time.Sleep(time.Second * 1)
-	return nil
+	timeout := time.After(30 * time.Second) // Maximum wait time
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	lspLogger.Debug("Waiting for LSP server to become ready...")
+
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("LSP server failed to become ready within 30 seconds")
+		case <-ticker.C:
+			if c.isServerReady(ctx) {
+				lspLogger.Debug("LSP server is ready")
+				return nil
+			}
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for server: %w", ctx.Err())
+		}
+	}
+}
+
+// isServerReady checks if the server is ready by making a simple workspace/symbol request
+func (c *Client) isServerReady(ctx context.Context) bool {
+	// Create a short timeout context for the readiness check
+	checkCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+
+	// Try a workspace symbol query - this is supported by most language servers
+	// and will fail if the server isn't ready yet
+	_, err := c.Symbol(checkCtx, protocol.WorkspaceSymbolParams{
+		Query: "test_readiness_check", // Use unlikely symbol name to minimize results
+	})
+	
+	if err != nil {
+		// Log at trace level to avoid spam during initialization
+		lspLogger.Debug("Server readiness check failed: %v", err)
+		return false
+	}
+	
+	return true
 }
 
 type OpenFileInfo struct {
